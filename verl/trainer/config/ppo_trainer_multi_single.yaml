@@ -161,6 +161,7 @@ reward_function:
 
 #latent_MAS config
 use_latent_mas: true
+model_name: /p/scratch/westai0052/zheng10/Verl-Agent/code/verl-agent/models/Qwen3-4B
 device: "cuda"
 device2: "cuda:1"  # 用于second HF model
 latent_steps: 3
