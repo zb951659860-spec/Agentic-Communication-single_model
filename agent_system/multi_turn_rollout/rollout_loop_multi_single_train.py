@@ -868,7 +868,4 @@ class MultiAgentTrajectoryCollector:
         
         print(f"[MultiAgentTrajectoryCollector] Generated {len(total_batch_list)} trajectories (single model, {self.n_agents} roles)")
         
-        return gen_batch_output        
-        print(f"[MultiAgentTrajectoryCollector] Generated {len(total_batch_list)} trajectories (single model, {self.n_agents} roles)")
-        
         return gen_batch_output
