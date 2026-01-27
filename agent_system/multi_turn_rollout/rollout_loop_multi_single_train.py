@@ -47,19 +47,18 @@ class MultiAgentTrajectoryCollector:
         tokenizer: PreTrainedTokenizer, 
         processor=None, 
         reward_fn=None,
-        agent_models: List[str] = None,  # 所有agent模型的路径列表
-        current_agent_idx: int = 0,      # 当前训练的agent索引
     ):
         """
-        初始化Multi-agent Trajectory Collector
+        初始化Multi-agent Trajectory Collector (单模型多角色版本)
         
         Parameters:
             config: 配置对象
             tokenizer: HuggingFace tokenizer
             processor: 可选的多模态processor
             reward_fn: 奖励计算函数
-            agent_models: 所有agent模型的路径列表
-            current_agent_idx: 当前正在训练的agent索引（0-based）
+        
+        Note:
+            单模型通过不同prompt扮演planner/critic/refiner/judger四个角色
         """
         self.config = config
         self.tokenizer = tokenizer
@@ -70,11 +69,10 @@ class MultiAgentTrajectoryCollector:
         self.log_dir = self.config.get('log_dir', '/p/scratch/westai0052/zheng10/Verl-Agent/log/GSM8K_integrated_test')
         self.logger = setup_logging(self.log_dir)  
 
-        # Multi-agent配置 - 使用固定4个agent（LatentMAS风格）
+        # Multi-agent配置 - 单模型扮演4个角色（LatentMAS风格）
         self.agents = default_agents()  # [planner, critic, refiner, judger]
-        self.n_agents = len(self.agents)  # 固定为4
-        self.agent_models = agent_models or []
-        self.current_agent_idx = current_agent_idx
+        self.n_agents = len(self.agents)  # 固定为4个角色
+        # 注意：单模型架构，所有角色由同一model_wrapper通过不同prompt扮演
         
         # 确保配置合理
         if self.agent_models:
@@ -126,8 +124,7 @@ class MultiAgentTrajectoryCollector:
             else:
                 self.logger.warning("[LatentMAS] use_latent_mas=True but no model_name provided!")
 
-        self.logger.info(f"[MultiAgentTrajectoryCollector] Initialized with {self.n_agents} agents")
-        self.logger.info(f"[MultiAgentTrajectoryCollector] Currently training agent {self.current_agent_idx}")
+        self.logger.info(f"[MultiAgentTrajectoryCollector] Initialized with {self.n_agents} roles (single model)")
         self.logger.info(f"[MultiAgentTrajectoryCollector] use_latent_mas={self.use_latent_mas}")
 
     def _build_latent_args(self, config) -> argparse.Namespace:
@@ -297,25 +294,13 @@ class MultiAgentTrajectoryCollector:
         gold_normalized = normalize_answer(gold)
         return pred == gold_normalized if (pred and gold_normalized) else False    
 
-    def set_current_agent(self, agent_idx: int):
-        """
-        切换当前训练的agent
-        
-        Parameters:
-            agent_idx: 要训练的agent索引
-        """
-        assert 0 <= agent_idx < self.n_agents, \
-            f"agent_idx ({agent_idx}) must be in [0, {self.n_agents})"
-        self.current_agent_idx = agent_idx
-        print(f"[MultiAgentTrajectoryCollector] Switched to training agent {agent_idx}")
-
     def _get_action_reducer(self, strategy: str):
         """获取action聚合函数"""
         strategies = {
             'majority_vote': self._majority_vote,
             'weighted_vote': self._weighted_vote,
             'first_agent': self._first_agent_vote,
-            'current_agent': self._current_agent_vote,  # 新增：使用当前训练agent的决策
+            # 'current_agent' 已移除 - 单模型架构不需要
         }
         
         if strategy not in strategies:
@@ -360,12 +345,6 @@ class MultiAgentTrajectoryCollector:
         if actions:
             return actions[0]
         return ""
-
-    def _current_agent_vote(self, actions: List[str], logprobs: Optional[List[float]] = None) -> str:
-        """使用当前训练agent的决策（用于单agent训练模式）"""
-        if len(actions) > self.current_agent_idx:
-            return actions[self.current_agent_idx]
-        return actions[0] if actions else ""
 
     def generate_agent_actions(
         self,
@@ -631,9 +610,9 @@ class MultiAgentTrajectoryCollector:
                     'done': dones[i],
                     'step': round_num,
                     'traj_uid': traj_uid[i],
-                    'agent_id': self.current_agent_idx,
+                    # 'agent_id' 已移除 - 单模型架构
                     'active_masks': 1,
-                    'all_agent_traces': round_agent_traces[i],  # 本轮所有agent的traces
+                    'all_agent_traces': round_agent_traces[i],
                     'structured_summary': summary_contexts[i],
                     'data_source': 'latent_mas_multi_round',
                 }
@@ -717,17 +696,16 @@ class MultiAgentTrajectoryCollector:
                 rewards.append(reward)
             
             for i in range(batch_size):
-                current_agent_action = all_agent_actions[self.current_agent_idx][i]
-                
+                # 单模型架构：使用聚合后的action
                 trajectory_step = {
                     'prompt': current_prompts[i] if isinstance(current_prompts, list) else "",
-                    'action': current_agent_action,
+                    'action': aggregated_actions[i],  # 使用聚合后的action
                     'aggregated_action': aggregated_actions[i],
                     'reward': rewards[i],
                     'done': dones[i],
                     'step': step,
                     'traj_uid': traj_uid[i],
-                    'agent_id': self.current_agent_idx,
+                    # 'agent_id' 已移除 - 单模型架构
                     'active_masks': 1,
                     'all_agent_actions': [all_agent_actions[a][i] for a in range(self.n_agents)],
                 }
@@ -795,7 +773,7 @@ class MultiAgentTrajectoryCollector:
                     tensor_data = {}
                     
                     # Numeric fields for tensor batch
-                    tensor_fields = ['reward', 'done', 'step', 'agent_id', 'active_masks',
+                    tensor_fields = ['reward', 'done', 'step', 'active_masks',
                                    'episode_rewards', 'episode_lengths']
                     
                     for field in tensor_fields:
@@ -813,7 +791,7 @@ class MultiAgentTrajectoryCollector:
                     tensor_data['episode_lengths_mean'] = episode_lengths_mean
                     tensor_data['episode_lengths_min'] = episode_lengths_min
                     tensor_data['episode_lengths_max'] = episode_lengths_max
-                    tensor_data['training_agent_id'] = self.current_agent_idx
+                    # 'training_agent_id' 已移除 - 单模型架构
                     
                     # Add success rate
                     for key, value in success_rate.items():
@@ -897,6 +875,6 @@ class MultiAgentTrajectoryCollector:
             traj_uid=total_traj_uid,
         )
         
-        print(f"[MultiAgentTrajectoryCollector] Generated {len(total_batch_list)} trajectories for agent {self.current_agent_idx}")
+        print(f"[MultiAgentTrajectoryCollector] Generated {len(total_batch_list)} trajectories (single model, {self.n_agents} roles)")
         
         return gen_batch_output
