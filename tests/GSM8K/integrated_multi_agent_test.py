@@ -218,19 +218,17 @@ class IntegratedMultiAgentTester:
                 return 0.5 if numbers else 0.0
             return 0.0
         
-        # Initialize the trajectory collector
+        # Initialize the trajectory collector (单模型架构)
         self.trajectory_collector = MultiAgentTrajectoryCollector(
             config=self.config,
             tokenizer=self.tokenizer,
             processor=self.processor,
             reward_fn=simple_reward_fn,
-            agent_models=self.agent_models if not self.use_latent_mas else [],
-            current_agent_idx=self.config.get('current_agent_idx', 0)
         )
         
-        self.logger.info(f"MultiAgentTrajectoryCollector initialized")
+        self.logger.info(f"MultiAgentTrajectoryCollector initialized (single model architecture)")
         self.logger.info(f"  use_latent_mas: {self.trajectory_collector.use_latent_mas}")
-        self.logger.info(f"  n_agents: {self.trajectory_collector.n_agents}")
+        self.logger.info(f"  n_roles: {self.trajectory_collector.n_agents}")
     
     def create_mock_actor_rollout_wg(self):
         """
@@ -680,8 +678,7 @@ def main():
                        help="Number of samples to test")
     parser.add_argument("--log_dir", type=str, default=None,
                        help="Override log directory")
-    parser.add_argument("--current_agent_idx", type=int, default=0,
-                       help="Index of agent being trained (0-based)")
+    # --current_agent_idx 已移除 - 单模型架构不需要
     
     # LatentMAS specific arguments
     parser.add_argument("--use_latent_mas", action="store_true",
@@ -701,8 +698,6 @@ def main():
     override_config = {}
     if args.log_dir:
         override_config['log_dir'] = args.log_dir
-    if args.current_agent_idx is not None:
-        override_config['current_agent_idx'] = args.current_agent_idx
     if args.use_latent_mas:
         override_config['use_latent_mas'] = True
     if args.model_name:
