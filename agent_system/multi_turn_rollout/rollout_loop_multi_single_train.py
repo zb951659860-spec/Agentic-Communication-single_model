@@ -74,15 +74,6 @@ class MultiAgentTrajectoryCollector:
         self.n_agents = len(self.agents)  # 固定为4个角色
         # 注意：单模型架构，所有角色由同一model_wrapper通过不同prompt扮演
         
-        # 确保配置合理
-        if self.agent_models:
-            assert len(self.agent_models) == self.n_agents, \
-                f"Number of agent models ({len(self.agent_models)}) must match n_agents ({self.n_agents})"
-        
-        # 保留原有验证（但n_agents现在固定为4）
-        assert 0 <= self.current_agent_idx < self.n_agents, \
-            f"current_agent_idx ({self.current_agent_idx}) must be in [0, {self.n_agents})"
-        
         # Action聚合策略（保留用于非LatentMAS模式）
         self.action_reduction_strategy = config.env.get('action_reduction', 'majority_vote') if hasattr(config, 'env') else 'majority_vote'
         self.action_reducer = self._get_action_reducer(self.action_reduction_strategy)
@@ -875,6 +866,9 @@ class MultiAgentTrajectoryCollector:
             traj_uid=total_traj_uid,
         )
         
+        print(f"[MultiAgentTrajectoryCollector] Generated {len(total_batch_list)} trajectories (single model, {self.n_agents} roles)")
+        
+        return gen_batch_output        
         print(f"[MultiAgentTrajectoryCollector] Generated {len(total_batch_list)} trajectories (single model, {self.n_agents} roles)")
         
         return gen_batch_output
