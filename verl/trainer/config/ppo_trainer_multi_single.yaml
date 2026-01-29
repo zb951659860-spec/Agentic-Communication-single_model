@@ -1,29 +1,12 @@
 # Multi-Agent Single Training Configuration
 # 基于ppo_trainer_multi.yaml修改，支持轮流训练多个agent
 
-# Multi-agent specific configuration
-multi_agent:
-  # 所有agent模型的路径列表
-  agent_models:
-    - /p/scratch/westai0052/zheng10/Verl-Agent/code/verl-agent/models/Qwen2.5-1.5B-Instruct
-    - /p/scratch/westai0052/zheng10/Verl-Agent/code/verl-agent/models/Qwen2.5-7B-Instruct  
-    - ~/models/agent3/deepseek-llm-7b-chat
-    - ~/models/agent4/deepseek-llm-7b-chat
-    - ~/models/agent5/deepseek-llm-7b-chat
-  
-  # 训练策略：sequential（轮流）或 simultaneous（同时，未实现）
-  training_strategy: sequential
-  
-  # 每个agent训练的epochs数（总epochs = n_agents * epochs_per_agent）
-  epochs_per_agent: 1
-
 # Environment configuration (no real env)
 env:
   use_real_env: false
   env_name: gsm8k_multi
   seed: 0
   max_steps: 2
-  n_agents: 2  # 必须与agent_models列表长度一致
   action_reduction: majority_vote  # 可选: majority_vote, weighted_vote, current_agent
   enable_agent_summary: true
   enable_intermediate_reward: false
