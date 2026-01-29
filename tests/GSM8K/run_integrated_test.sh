@@ -12,7 +12,6 @@ export PYTHONPATH=/p/scratch/westai0052/zheng10/Verl-Agent/code/verl-agent:$PYTH
 CONFIG_FILE="/p/scratch/westai0052/zheng10/Verl-Agent/code/verl-agent/verl/trainer/config/ppo_trainer_multi_single.yaml"
 LOG_DIR="/p/scratch/westai0052/zheng10/Verl-Agent/log/GSM8K_integrated_test"
 NUM_SAMPLES=3
-CURRENT_AGENT_IDX=0
 
 # Allow command line overrides
 if [ "$1" != "" ]; then
@@ -21,10 +20,6 @@ fi
 
 if [ "$2" != "" ]; then
     NUM_SAMPLES="$2"
-fi
-
-if [ "$3" != "" ]; then
-    CURRENT_AGENT_IDX="$3"
 fi
 
 # Create log directory
@@ -38,7 +33,6 @@ echo "=========================================="
 echo "Config File: ${CONFIG_FILE}"
 echo "Log Directory: ${LOG_DIR}"
 echo "Number of Samples: ${NUM_SAMPLES}"
-echo "Current Agent Index: ${CURRENT_AGENT_IDX}"
 echo "=========================================="
 
 # Check config file
@@ -60,7 +54,6 @@ try:
     env = config.get('env', {})
     multi_agent = config.get('multi_agent', {})
     
-    print(f'  Agents: {env.get(\"n_agents\", \"?\")}')
     print(f'  Max Steps: {env.get(\"max_steps\", \"?\")}')
     print(f'  Action Reduction: {env.get(\"action_reduction\", \"?\")}')
     
@@ -83,7 +76,6 @@ echo ""
 python /p/scratch/westai0052/zheng10/Verl-Agent/code/verl-agent/tests/GSM8K/integrated_multi_agent_test.py \
     --config "${CONFIG_FILE}" \
     --num_samples ${NUM_SAMPLES} \
-    --current_agent_idx ${CURRENT_AGENT_IDX} \
     --log_dir "${LOG_DIR}"
 
 # Check status
@@ -124,10 +116,6 @@ echo ""
 echo "=========================================="
 echo "Test Complete!"
 echo "=========================================="
-echo ""
-echo "Usage:"
-echo "  $0 [config_file] [num_samples] [current_agent_idx]"
-echo ""
 echo "Example:"
 echo "  $0  # Use defaults"
 echo "  $0 custom.yaml 5 1  # Custom config, 5 samples, agent 1"
