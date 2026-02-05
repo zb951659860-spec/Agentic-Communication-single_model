@@ -278,12 +278,51 @@ class MultiAgentTrajectoryCollector:
     def _check_answer_correct(self, question: str, answer: str, gold: Optional[str] = None) -> bool:
         """检查答案是否正确"""
         if gold is None:
-            # 简单检查：答案非空
-            return len(answer.strip()) > 0
+            self.logger.warning(f"[_check_answer_correct] gold is None, returning False")
+            return False
         
-        pred = normalize_answer(extract_gsm8k_answer(answer))
-        gold_normalized = normalize_answer(gold)
-        return pred == gold_normalized if (pred and gold_normalized) else False    
+        import re
+        
+        # ========== 1. 从 gold 中提取答案 ==========
+        # GSM8K 格式: "...解题过程...\n#### 数字"
+        gold_extracted = None
+        
+        # 尝试提取 #### 后的数字
+        gold_match = re.search(r'####\s*(\S+)', gold)
+        if gold_match:
+            gold_extracted = gold_match.group(1).strip()
+        else:
+            # 如果没有 #### 格式，假设整个 gold 就是答案
+            gold_extracted = gold.strip()
+        
+        # ========== 2. 从模型输出中提取答案 ==========
+        processed_answer = answer
+        
+        # 尝试提取 </think> 之后的内容（如果有）
+        think_end_match = re.search(r'</think>\s*(.*)', answer, re.DOTALL)
+        if think_end_match:
+            processed_answer = think_end_match.group(1)
+        
+        # 提取 \boxed{} 中的答案
+        pred = extract_gsm8k_answer(processed_answer)
+        
+        # 如果从 </think> 后没提取到，尝试从整个答案中提取
+        if not pred:
+            pred = extract_gsm8k_answer(answer)
+        
+        # ========== 3. 标准化并比较 ==========
+        pred_normalized = normalize_answer(pred) if pred else None
+        gold_normalized = normalize_answer(gold_extracted) if gold_extracted else None
+        
+        # 调试日志
+        self.logger.info(f"[Answer Check] gold_raw='{gold[:50]}...' -> gold_extracted='{gold_extracted}' -> gold_normalized='{gold_normalized}'")
+        self.logger.info(f"[Answer Check] pred_raw='{pred}' -> pred_normalized='{pred_normalized}'")
+        self.logger.info(f"[Answer Check] answer_preview: {answer[:200]}...")
+        
+        is_correct = pred_normalized == gold_normalized if (pred_normalized and gold_normalized) else False
+        self.logger.info(f"[Answer Check] is_correct={is_correct}")
+        
+        return is_correct
 
     def _get_action_reducer(self, strategy: str):
         """获取action聚合函数"""
@@ -538,11 +577,16 @@ class MultiAgentTrajectoryCollector:
                 else:
                     # ===== Judger: 生成文本输出 + 结构化摘要 =====
                     past_for_decoding = past_kv if self.latent_steps > 0 else None
-                    
+
                     if self.latent_args.think:
                         judger_prompts = [f"{prompt}<think>" for prompt in prompts]
                     else:
                         judger_prompts = prompts
+                    
+                    # 调试：检查 prompts 内容
+                    self.logger.info(f"[DEBUG Judger] prompts count: {len(prompts)}")
+                    for i, p in enumerate(prompts[:2]):  # 只打印前2个
+                        self.logger.info(f"[DEBUG Judger] prompts[{i}] length: {len(p)}, preview: {p[:100] if p else 'EMPTY'}...")
                     
                     judger_encoded = self.model_wrapper.tokenizer(
                         judger_prompts,
@@ -595,13 +639,12 @@ class MultiAgentTrajectoryCollector:
                 
                 trajectory_step = {
                     'prompt': questions[i],
-                    'action': final_texts[i],  # judger的最终输出
+                    'action': final_texts[i],
                     'aggregated_action': final_texts[i],
-                    'reward': reward,
-                    'done': dones[i],
-                    'step': round_num,
+                    'reward': float(reward),  # 确保是 float
+                    'done': 1 if dones[i] else 0,  # 转为 int，避免 bool 类型问题
+                    'step': int(round_num),  # 确保是 int
                     'traj_uid': traj_uid[i],
-                    # 'agent_id' 已移除 - 单模型架构
                     'active_masks': 1,
                     'all_agent_traces': round_agent_traces[i],
                     'structured_summary': summary_contexts[i],
@@ -797,23 +840,118 @@ class MultiAgentTrajectoryCollector:
                             non_tensor_batch[key].append(data[key])
                         else:
                             non_tensor_batch[key].append("")  # Default empty string
-        
+
+        # 调试：检查 tensor_batch 内容
+        self.logger.info(f"[gather_rollout_data] tensor_batch length: {len(tensor_batch)}")
+        if tensor_batch:
+            self.logger.info(f"[gather_rollout_data] tensor_batch[0] keys: {tensor_batch[0].keys()}")
+            self.logger.info(f"[gather_rollout_data] tensor_batch[0] sample: {tensor_batch[0]}")    
+
+        # Create DataProto
         # Create DataProto
         if tensor_batch:
-            # Collate only tensor data
-            collated_tensor_data = collate_fn(tensor_batch)
+            self.logger.info(f"[gather_rollout_data] Creating DataProto with {len(tensor_batch)} items")
             
-            # collated_tensor_data 是 dict[str, Tensor]，用 from_single_dict
-            gen_batch_output = DataProto.from_single_dict(collated_tensor_data)
+            # 检查点1: collate_fn 调用
+            try:
+                collated_tensor_data = collate_fn(tensor_batch)
+                self.logger.info(f"[gather_rollout_data] collate_fn succeeded")
+                self.logger.info(f"[gather_rollout_data] collated_tensor_data type: {type(collated_tensor_data)}")
+                self.logger.info(f"[gather_rollout_data] collated_tensor_data keys: {collated_tensor_data.keys() if isinstance(collated_tensor_data, dict) else 'N/A'}")
+                
+                # 检查点2: 检查每个字段的类型和形状
+                if isinstance(collated_tensor_data, dict):
+                    for key, value in collated_tensor_data.items():
+                        if hasattr(value, 'shape'):
+                            self.logger.info(f"[gather_rollout_data]   {key}: type={type(value).__name__}, shape={value.shape}")
+                        else:
+                            self.logger.info(f"[gather_rollout_data]   {key}: type={type(value).__name__}, value={value}")
+            except Exception as e:
+                self.logger.error(f"[gather_rollout_data] collate_fn FAILED: {e}")
+                import traceback
+                self.logger.error(traceback.format_exc())
+                collated_tensor_data = {}
+            
+            # ========== 关键修复：将 numpy.ndarray 转换为 torch.Tensor ==========
+            if isinstance(collated_tensor_data, dict):
+                keys_to_remove = []  # 记录无法转换的字段
+                
+                for key, value in collated_tensor_data.items():
+                    if isinstance(value, np.ndarray):
+                        # 检查 dtype 是否为 object（不支持直接转换）
+                        if value.dtype == np.object_:
+                            self.logger.warning(f"[gather_rollout_data] {key} has dtype=object, attempting conversion")
+                            try:
+                                # 尝试转换为 float64
+                                value = value.astype(np.float64)
+                                self.logger.info(f"[gather_rollout_data] {key} converted from object to float64")
+                            except (ValueError, TypeError) as e:
+                                self.logger.warning(f"[gather_rollout_data] Cannot convert {key} from object to float64: {e}")
+                                # 尝试转换为 int64
+                                try:
+                                    value = value.astype(np.int64)
+                                    self.logger.info(f"[gather_rollout_data] {key} converted from object to int64")
+                                except (ValueError, TypeError) as e2:
+                                    self.logger.error(f"[gather_rollout_data] Cannot convert {key} to numeric type, skipping: {e2}")
+                                    keys_to_remove.append(key)
+                                    continue
+                        
+                        # 转换为 Tensor
+                        try:
+                            collated_tensor_data[key] = torch.from_numpy(value)
+                            self.logger.info(f"[gather_rollout_data] Converted {key} from ndarray({value.dtype}) to Tensor")
+                        except Exception as e:
+                            self.logger.error(f"[gather_rollout_data] torch.from_numpy failed for {key}: {e}")
+                            keys_to_remove.append(key)
+                            
+                    elif not isinstance(value, torch.Tensor):
+                        # 尝试转换其他类型
+                        try:
+                            collated_tensor_data[key] = torch.tensor(value)
+                            self.logger.info(f"[gather_rollout_data] Converted {key} from {type(value).__name__} to Tensor")
+                        except Exception as conv_e:
+                            self.logger.warning(f"[gather_rollout_data] Cannot convert {key} to Tensor: {conv_e}")
+                            keys_to_remove.append(key)
+                
+                # 移除无法转换的字段
+                for key in keys_to_remove:
+                    del collated_tensor_data[key]
+                    self.logger.warning(f"[gather_rollout_data] Removed unconvertible field: {key}")
+            
+            # 检查点3: DataProto.from_single_dict 调用
+            try:
+                if collated_tensor_data:
+                    gen_batch_output = DataProto.from_single_dict(collated_tensor_data)
+                    self.logger.info(f"[gather_rollout_data] DataProto.from_single_dict succeeded")
+                    
+                    # 检查点4: 检查 DataProto 的属性
+                    self.logger.info(f"[gather_rollout_data] gen_batch_output type: {type(gen_batch_output)}")
+                    self.logger.info(f"[gather_rollout_data] gen_batch_output.batch: {gen_batch_output.batch if hasattr(gen_batch_output, 'batch') else 'NO .batch attr'}")
+                    if hasattr(gen_batch_output, 'batch') and gen_batch_output.batch is not None:
+                        self.logger.info(f"[gather_rollout_data] gen_batch_output.batch type: {type(gen_batch_output.batch)}")
+                        if isinstance(gen_batch_output.batch, dict):
+                            self.logger.info(f"[gather_rollout_data] gen_batch_output.batch keys: {gen_batch_output.batch.keys()}")
+                        elif hasattr(gen_batch_output.batch, 'keys'):
+                            self.logger.info(f"[gather_rollout_data] gen_batch_output.batch keys: {gen_batch_output.batch.keys()}")
+                else:
+                    self.logger.warning(f"[gather_rollout_data] collated_tensor_data is empty, creating empty DataProto")
+                    gen_batch_output = DataProto.from_single_dict({})
+            except Exception as e:
+                self.logger.error(f"[gather_rollout_data] DataProto.from_single_dict FAILED: {e}")
+                import traceback
+                self.logger.error(traceback.format_exc())
+                gen_batch_output = DataProto.from_single_dict({})
 
-            # non_tensor_batch 单独挂载（当前版本 from_single_dict/from_dict 都不接受 dict 值）
+            # non_tensor_batch 单独挂载
             gen_batch_output.non_tensor_batch = non_tensor_batch
+            self.logger.info(f"[gather_rollout_data] non_tensor_batch attached with {len(non_tensor_batch)} keys")
         else:
-            # Return empty DataProto if no data
+            self.logger.warning("[gather_rollout_data] tensor_batch is empty!")
             gen_batch_output = DataProto.from_single_dict({})
-            gen_batch_output.non_tensor_batch = {}
+            gen_batch_output.non_tensor_batch = non_tensor_batch
+        
         return gen_batch_output
-
+        
     def multi_turn_loop(
         self,
         gen_batch: DataProto,
