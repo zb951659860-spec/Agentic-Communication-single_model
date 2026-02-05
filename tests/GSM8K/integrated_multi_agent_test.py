@@ -541,6 +541,20 @@ class IntegratedMultiAgentTester:
         self.logger.info("Processing results from MultiAgentTrajectoryCollector...")
         
         # Process tensor batch data
+
+        # 检查点: 详细检查 gen_batch_output 的结构
+        self.logger.info(f"[run_test] gen_batch_output type: {type(gen_batch_output)}")
+        self.logger.info(f"[run_test] gen_batch_output dir: {[attr for attr in dir(gen_batch_output) if not attr.startswith('_')]}")
+        
+        if hasattr(gen_batch_output, 'batch'):
+            self.logger.info(f"[run_test] gen_batch_output.batch: {gen_batch_output.batch}")
+            self.logger.info(f"[run_test] gen_batch_output.batch is None: {gen_batch_output.batch is None}")
+        else:
+            self.logger.info(f"[run_test] gen_batch_output has NO 'batch' attribute")
+        
+        if hasattr(gen_batch_output, 'non_tensor_batch'):
+            self.logger.info(f"[run_test] gen_batch_output.non_tensor_batch keys: {gen_batch_output.non_tensor_batch.keys() if gen_batch_output.non_tensor_batch else 'None'}")
+            
         if hasattr(gen_batch_output, 'batch') and gen_batch_output.batch is not None:
             batch_data = gen_batch_output.batch
 
